@@ -585,7 +585,8 @@ function startCheckout() {
   $('drawerTitle').textContent = 'Checkout';
   $('drawerFooter').innerHTML = '';
   const zones = Object.keys(CONFIG.SHIPPING).map(r => `<option>${esc(r)}</option>`).join('');
-  $('drawerBody').innerHTML = `<form id="checkoutForm" novalidate style="display:flex;flex-direction:column;gap:12px">
+  $('drawerBody').innerHTML = `<form id="checkoutForm" novalidate data-step="details" style="display:flex;flex-direction:column;gap:12px">
+    <div id="stepDetails" style="display:flex;flex-direction:column;gap:12px">
     <input class="field" name="name" placeholder="Full name" maxlength="80" autocomplete="name" required>
     <input class="field" name="email" type="email" placeholder="Email" maxlength="120" autocomplete="email" required>
     <input class="field" name="phone" type="tel" placeholder="Mobile (09XX XXX XXXX)" maxlength="16" autocomplete="tel" required>
@@ -606,27 +607,64 @@ function startCheckout() {
     </div>
     <input class="field" name="street" placeholder="House / unit no. &amp; street" maxlength="120" autocomplete="address-line1" required>
     <input class="field" name="postal" placeholder="Postal code" inputmode="numeric" maxlength="4" autocomplete="postal-code" required>
+    <textarea class="field" name="notes" placeholder="Notes (optional)" maxlength="300" rows="2"></textarea>
+    <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    </div>
+    <div id="stepPay" style="display:none;flex-direction:column;gap:12px">
     <div style="font-size:12px;letter-spacing:.1em;font-weight:600;margin-top:6px">PAYMENT</div>
     ${Object.entries(CONFIG.PAYMENTS).map(([k, v], n) => `<label class="radio"><input type="radio" name="payment" value="${esc(k)}"${n === 0 ? ' checked' : ''}> ${esc(v.label)}</label>`).join('')}
     <div id="paymentNote" class="note">${esc(CONFIG.PAYMENTS.gcash.note)}</div>
-    <div class="note">Please pay the Total above before placing your order.</div>
+    <div class="note">Please send exactly <b id="payAmt">—</b> to the account above, then enter your payment reference number below to place your order.</div>
     <input class="field" name="paymentReference" placeholder="Payment Reference Number" maxlength="100" autocomplete="off" required>
-    <div class="note">Enter the reference number shown in your payment confirmation.</div>
-    <textarea class="field" name="notes" placeholder="Notes (optional)" maxlength="300" rows="2"></textarea>
-    <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="note">Enter the reference number shown in your GCash / Maya confirmation or your bank transaction number.</div>
+    </div>
     <div class="sumrow"><span>Subtotal</span><span id="subtotalAmt">${peso(subtotalOf())}</span></div>
     <div class="sumrow"><span>Shipping</span><span id="shipAmt">—</span></div>
     <div class="sumrow" style="font-weight:600"><span>Total</span><span id="totalAmt">${peso(subtotalOf())}</span></div>
     <div class="err" id="formErr" role="alert"></div>
-    <button type="submit" class="btn dark" style="width:100%;text-align:center;margin-top:0">PLACE ORDER</button>
+    <button type="button" class="btn dark" id="btnCheckout" style="width:100%;text-align:center;margin-top:0">CHECKOUT</button>
+    <button type="submit" class="btn dark" id="btnPlace" style="width:100%;text-align:center;margin-top:0;display:none">PLACE ORDER</button>
     <button type="button" data-back style="font-size:12px;text-decoration:underline;color:#6b5d52">← Back to bag</button>
+    <button type="button" data-back-details style="font-size:12px;text-decoration:underline;color:#6b5d52;display:none">← Back to details</button>
   </form>`;
   const f = $('checkoutForm');
   f.addEventListener('submit', submitOrder);
   f.querySelector('[data-back]').addEventListener('click', renderCart);
+  $('btnCheckout').addEventListener('click', goToPayment);
+  f.querySelector('[data-back-details]').addEventListener('click', () => showStep('details'));
   f.querySelectorAll('input[name="payment"]').forEach(r => r.addEventListener('change', updatePaymentNote));
   initGeo();
   updatePaymentNote();
+}
+
+function showStep(step) {
+  const f = $('checkoutForm'); if (!f) return;
+  const pay = step === 'pay';
+  f.dataset.step = step;
+  $('stepDetails').style.display = pay ? 'none' : 'flex';
+  $('stepPay').style.display = pay ? 'flex' : 'none';
+  $('btnCheckout').style.display = pay ? 'none' : '';
+  $('btnPlace').style.display = pay ? '' : 'none';
+  f.querySelector('[data-back]').style.display = pay ? 'none' : '';
+  f.querySelector('[data-back-details]').style.display = pay ? '' : 'none';
+  $('formErr').textContent = '';
+  if (pay) syncPayAmt();
+  const body = $('drawerBody'); if (body) body.scrollTop = 0;
+}
+function syncPayAmt() { if ($('payAmt') && $('totalAmt')) $('payAmt').textContent = $('totalAmt').textContent; }
+function goToPayment() {
+  const bad = validateDetails(readForm($('checkoutForm')));
+  if (bad) { $('formErr').textContent = bad; return; }
+  showStep('pay');
+}
+function readForm(f) {
+  const fd = new FormData(f), g = k => String(fd.get(k) || '').trim();
+  const geo = readGeo();
+  return { name: g('name'), email: g('email'), phone: g('phone').replace(/[\s-]/g, ''),
+    street: g('street'), brgy: geo.brgy, cityName: geo.city,
+    address: [g('street'), geo.brgy].filter(Boolean).join(', '),
+    city: [geo.city, geo.prov || geo.region].filter(Boolean).join(', ').slice(0, 80),
+    region: geo.zone, postal: g('postal'), payment: g('payment'), paymentReference: g('paymentReference'), notes: g('notes'), website: g('website') };
 }
 
 function updatePaymentNote() {
@@ -640,6 +678,7 @@ async function refreshQuote() {
   if (!zone) {
     $('shipAmt').textContent = '—';
     $('totalAmt').textContent = peso(subtotalOf());
+    syncPayAmt();
     return;
   }
   const localSubtotal = subtotalOf();
@@ -647,6 +686,7 @@ async function refreshQuote() {
   $('subtotalAmt').textContent = peso(localSubtotal);
   $('shipAmt').textContent = peso(localShipping);
   $('totalAmt').textContent = peso(localSubtotal + localShipping);
+  syncPayAmt();
   if (!CONFIG.ORDER_ENDPOINT) return;
   try {
     const out = await send({ type: 'quote', region: zone, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
@@ -654,12 +694,13 @@ async function refreshQuote() {
       $('subtotalAmt').textContent = peso(out.subtotal);
       $('shipAmt').textContent = peso(out.shipping);
       $('totalAmt').textContent = peso(out.total);
+      syncPayAmt();
     }
   } catch (x) {
     console.warn('quote refresh failed', x);
   }
 }
-function validate(d) {
+function validateDetails(d) {
   if (d.name.length < 2) return 'Please enter your full name.';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email)) return 'Please enter a valid email.';
   if (!/^(\+?63|0)9\d{9}$/.test(d.phone)) return 'Please enter a valid PH mobile number.';
@@ -668,8 +709,12 @@ function validate(d) {
   if (d.brgy.length < 2) return 'Please choose your barangay.';
   if (d.street.length < 3) return 'Please enter your house / unit no. and street.';
   if (!/^\d{4}$/.test(d.postal)) return 'Postal code should be 4 digits.';
+  return '';
+}
+function validate(d) {
+  const bad = validateDetails(d); if (bad) return bad;
   if (!Object.prototype.hasOwnProperty.call(CONFIG.PAYMENTS, d.payment)) return 'Please choose a payment method.';
-  if (d.paymentReference.length < 3) return 'Please enter your payment reference number.';
+  if (d.paymentReference.length < 6) return 'Please enter your payment reference number (at least 6 characters).';
   return '';
 }
 
@@ -700,16 +745,11 @@ async function submitOrder(e) {
   e.preventDefault();
   if (busy) return;
   const f = e.target, err = $('formErr'), btn = f.querySelector('[type=submit]');
-  const fd = new FormData(f), g = k => String(fd.get(k) || '').trim();
-  const geo = readGeo();
-  const d = { name: g('name'), email: g('email'), phone: g('phone').replace(/[\s-]/g, ''),
-    street: g('street'), brgy: geo.brgy, cityName: geo.city,
-    address: [g('street'), geo.brgy].filter(Boolean).join(', '),
-    city: [geo.city, geo.prov || geo.region].filter(Boolean).join(', ').slice(0, 80),
-    region: geo.zone, postal: g('postal'), payment: g('payment'), paymentReference: g('paymentReference'), notes: g('notes') };
+  if (f.dataset.step !== 'pay') { goToPayment(); return; }   // Enter key on step 1 must not skip payment
+  const d = readForm(f), trap = d.website; delete d.website;
   const bad = validate(d);
   if (bad) { err.textContent = bad; return; }
-  if (g('website')) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
+  if (trap) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
   let last = 0; try { last = +localStorage.getItem('esachica_last') || 0; } catch (x) {}
   if (Date.now() - last < 15000) { err.textContent = 'Please wait a few seconds before ordering again.'; return; }
   busy = true; btn.disabled = true; btn.textContent = 'PLACING ORDER…'; err.textContent = '';
@@ -722,6 +762,8 @@ async function submitOrder(e) {
     console.error(x);
     err.textContent = x.message === 'not-configured'
       ? 'Ordering isn’t connected yet. Please DM us on Instagram @esachica.clo to order.'
+      : x.message === 'Payment reference already used'
+      ? 'That payment reference number was already used on another order. Please check it and try again.'
       : 'We couldn’t place your order (code: ' + esc(String(x.message).slice(0, 40)) + '). Your bag is saved — please try again or DM us on Instagram.';
     btn.disabled = false; btn.textContent = 'PLACE ORDER';
   } finally { busy = false; }
