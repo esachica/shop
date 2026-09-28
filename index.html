@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Esa Chica — Sleepwear for the girl who knows</title>
 <meta name="description" content="Esa Chica (@esachica.clo) — sleepwear made for slow mornings and late nights.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; base-uri 'none'; object-src 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://psgc.gitlab.io; base-uri 'none'; object-src 'none'; form-action 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -199,6 +199,8 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
 .help p{font-size:14px;color:#5c4d43;line-height:1.7}
 .news-form input:focus{outline:none}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}.hero-content{opacity:1}}
+.field:disabled{opacity:.5;cursor:not-allowed}
+.note{font-size:12px;color:#6b5d52}
 </style>
 </head>
 <body>
@@ -359,6 +361,8 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
 const CONFIG = {
   // Paste your Google Apps Script Web App URL here (see SETUP.md). This is what sends orders to your Gmail + Google Sheet.
   ORDER_ENDPOINT: 'https://script.google.com/macros/s/AKfycbxGkBj1U7eeEy5lC-7aMiBDRwRC0pn8VUkIFJixZNvvSHa8R6ryn42VsC_ilSyGgyQ/exec',
+  // Free Philippine address list (regions > provinces > cities > barangays). Leave as is.
+  PSGC: 'https://psgc.gitlab.io/api',
   // Fallback if no endpoint: order opens as a prefilled email to this address.
   EMAIL: 'esachica.clo@gmail.com',
   INSTAGRAM: 'https://www.instagram.com/esachica.clo/',
@@ -489,17 +493,115 @@ $('drawerBody').addEventListener('change', e => {
 });
 $('drawerFooter').addEventListener('click', e => { if (e.target.closest('[data-act="checkout"]')) startCheckout(); });
 
+const GEO = { cache: {}, seq: 0, manual: false, noProv: false, zone: '' };
+function zoneOf(name, island) {
+  if (/national capital|\bncr\b/i.test(name)) return 'Metro Manila';
+  const isl = String(island || '').toLowerCase();
+  if (isl === 'visayas' || /visayas|negros island/i.test(name)) return 'Visayas';
+  if (isl === 'mindanao' || /mindanao|zamboanga|davao|soccsksargen|caraga|bangsamoro|barmm/i.test(name)) return 'Mindanao';
+  return 'Luzon (outside Metro Manila)';
+}
+async function psgc(path) {
+  if (GEO.cache[path]) return GEO.cache[path];
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 9000);
+  try {
+    const r = await fetch(CONFIG.PSGC + path, { signal: ctl.signal });
+    if (!r.ok) throw new Error('psgc');
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : null);
+    if (!arr) throw new Error('psgc');
+    const list = arr.filter(x => x && x.code && x.name)
+      .map(x => ({ code: String(x.code), name: String(x.name), island: x.islandGroupCode || '' }))
+      .sort((p, q) => p.name.localeCompare(q.name));
+    return (GEO.cache[path] = list);
+  } finally { clearTimeout(t); }
+}
+function fillSel(sel, list, ph) {
+  sel.length = 0;
+  const o0 = document.createElement('option'); o0.value = ''; o0.textContent = ph; sel.appendChild(o0);
+  for (const x of list) {
+    const o = document.createElement('option'); o.value = x.code; o.textContent = x.name; o.dataset.island = x.island; sel.appendChild(o);
+  }
+  sel.disabled = !list.length;
+}
+function setShip(zone) {
+  GEO.zone = zone || '';
+  const s = CONFIG.SHIPPING[GEO.zone];
+  $('shipAmt').textContent = s == null ? '—' : peso(s);
+  $('totalAmt').textContent = peso(subtotalOf() + (s || 0));
+}
+function readGeo() {
+  if (GEO.manual) return { prov: $('mProv').value.trim(), city: $('mCity').value.trim(), brgy: $('mBrgy').value.trim(), zone: $('mZone').value, region: '' };
+  const txt = s => (s.value && s.selectedOptions[0]) ? s.selectedOptions[0].textContent : '';
+  const brgy = $('gBrgy').style.display === 'none' ? $('gBrgyText').value.trim() : txt($('gBrgy'));
+  return { prov: GEO.noProv ? '' : txt($('gProv')), city: txt($('gCity')), brgy, zone: GEO.zone, region: txt($('gRegion')) };
+}
+function initGeo() {
+  Object.assign(GEO, { seq: 0, manual: false, noProv: false, zone: '' });
+  const R = $('gRegion'), P = $('gProv'), C = $('gCity'), B = $('gBrgy'), BT = $('gBrgyText');
+  const PH = { gProv: 'Province', gCity: 'City / municipality', gBrgy: 'Barangay' };
+  const fail = () => { GEO.manual = true; $('geoAuto').style.display = 'none'; $('geoManual').style.display = 'flex'; setShip($('mZone').value); };
+  const clear = (...sels) => sels.forEach(s => { fillSel(s, [], PH[s.id]); s.style.display = ''; });
+  const cities = async (path, my) => {
+    fillSel(C, [], 'Loading…');
+    const l = await psgc(path); if (my !== GEO.seq) return;
+    fillSel(C, l, PH.gCity);
+  };
+  psgc('/regions/').then(l => fillSel(R, l, 'Region')).catch(fail);
+  R.addEventListener('change', async () => {
+    const my = ++GEO.seq; clear(P, C, B); BT.style.display = 'none'; GEO.noProv = false; setShip('');
+    const o = R.selectedOptions[0]; if (!o || !o.value) return;
+    setShip(zoneOf(o.textContent, o.dataset.island));
+    try {
+      fillSel(P, [], 'Loading…');
+      const provs = await psgc('/regions/' + o.value + '/provinces/'); if (my !== GEO.seq) return;
+      if (provs.length) { fillSel(P, provs, PH.gProv); }
+      else { GEO.noProv = true; P.style.display = 'none'; await cities('/regions/' + o.value + '/cities-municipalities/', my); }
+    } catch (x) { if (my === GEO.seq) fail(); }
+  });
+  P.addEventListener('change', async () => {
+    const my = ++GEO.seq; clear(C, B); BT.style.display = 'none';
+    if (!P.value) return;
+    try { await cities('/provinces/' + P.value + '/cities-municipalities/', my); } catch (x) { if (my === GEO.seq) fail(); }
+  });
+  C.addEventListener('change', async () => {
+    const my = ++GEO.seq; clear(B); BT.style.display = 'none'; BT.value = '';
+    if (!C.value) return;
+    try {
+      fillSel(B, [], 'Loading…');
+      const l = await psgc('/cities-municipalities/' + C.value + '/barangays/'); if (my !== GEO.seq) return;
+      if (l.length) fillSel(B, l, PH.gBrgy);
+      else { B.style.display = 'none'; BT.style.display = ''; }   // some cities (e.g. Manila) list barangays under districts: let her type it
+    } catch (x) { if (my === GEO.seq) { B.style.display = 'none'; BT.style.display = ''; } }
+  });
+  $('mZone').addEventListener('change', e => setShip(e.target.value));
+}
+
 function startCheckout() {
   if (!cart.length) return;
   $('drawerTitle').textContent = 'Checkout';
   $('drawerFooter').innerHTML = '';
+  const zones = Object.keys(CONFIG.SHIPPING).map(r => `<option>${esc(r)}</option>`).join('');
   $('drawerBody').innerHTML = `<form id="checkoutForm" novalidate style="display:flex;flex-direction:column;gap:12px">
     <input class="field" name="name" placeholder="Full name" maxlength="80" autocomplete="name" required>
     <input class="field" name="email" type="email" placeholder="Email" maxlength="120" autocomplete="email" required>
     <input class="field" name="phone" type="tel" placeholder="Mobile (09XX XXX XXXX)" maxlength="16" autocomplete="tel" required>
-    <input class="field" name="address" placeholder="Street address, barangay" maxlength="200" autocomplete="street-address" required>
-    <input class="field" name="city" placeholder="City / municipality" maxlength="80" autocomplete="address-level2" required>
-    <select class="field" name="region" id="regionSel" required><option value="">Shipping region</option>${Object.keys(CONFIG.SHIPPING).map(r => `<option>${esc(r)}</option>`).join('')}</select>
+    <div style="font-size:12px;letter-spacing:.1em;font-weight:600;margin-top:6px">DELIVERY ADDRESS</div>
+    <div id="geoAuto" style="display:flex;flex-direction:column;gap:12px">
+      <select class="field" id="gRegion" aria-label="Region"><option value="">Loading regions…</option></select>
+      <select class="field" id="gProv" aria-label="Province" disabled><option value="">Province</option></select>
+      <select class="field" id="gCity" aria-label="City or municipality" disabled><option value="">City / municipality</option></select>
+      <select class="field" id="gBrgy" aria-label="Barangay" disabled><option value="">Barangay</option></select>
+      <input class="field" id="gBrgyText" placeholder="Barangay" maxlength="80" style="display:none">
+    </div>
+    <div id="geoManual" style="display:none;flex-direction:column;gap:12px">
+      <div class="note">We couldn’t load the address list — please type your address.</div>
+      <input class="field" id="mProv" placeholder="Province" maxlength="60">
+      <input class="field" id="mCity" placeholder="City / municipality" maxlength="60">
+      <input class="field" id="mBrgy" placeholder="Barangay" maxlength="60">
+      <select class="field" id="mZone" aria-label="Shipping area"><option value="">Shipping area</option>${zones}</select>
+    </div>
+    <input class="field" name="street" placeholder="House / unit no. &amp; street" maxlength="120" autocomplete="address-line1" required>
     <input class="field" name="postal" placeholder="Postal code" inputmode="numeric" maxlength="4" autocomplete="postal-code" required>
     <div style="font-size:12px;letter-spacing:.1em;font-weight:600;margin-top:6px">PAYMENT</div>
     ${Object.entries(CONFIG.PAYMENTS).map(([k, v], n) => `<label class="radio"><input type="radio" name="payment" value="${esc(k)}"${n === 0 ? ' checked' : ''}> ${esc(v.label)}</label>`).join('')}
@@ -515,20 +617,17 @@ function startCheckout() {
   const f = $('checkoutForm');
   f.addEventListener('submit', submitOrder);
   f.querySelector('[data-back]').addEventListener('click', renderCart);
-  $('regionSel').addEventListener('change', e => {
-    const s = CONFIG.SHIPPING[e.target.value];
-    $('shipAmt').textContent = s == null ? '—' : peso(s);
-    $('totalAmt').textContent = peso(subtotalOf() + (s || 0));
-  });
+  initGeo();
 }
 
 function validate(d) {
   if (d.name.length < 2) return 'Please enter your full name.';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email)) return 'Please enter a valid email.';
   if (!/^(\+?63|0)9\d{9}$/.test(d.phone)) return 'Please enter a valid PH mobile number.';
-  if (d.address.length < 5) return 'Please enter your street address.';
-  if (d.city.length < 2) return 'Please enter your city.';
-  if (!Object.prototype.hasOwnProperty.call(CONFIG.SHIPPING, d.region)) return 'Please choose a shipping region.';
+  if (!Object.prototype.hasOwnProperty.call(CONFIG.SHIPPING, d.region)) return GEO.manual ? 'Please choose your shipping area.' : 'Please choose your region.';
+  if (d.cityName.length < 2) return 'Please choose your city / municipality.';
+  if (d.brgy.length < 2) return 'Please choose your barangay.';
+  if (d.street.length < 3) return 'Please enter your house / unit no. and street.';
   if (!/^\d{4}$/.test(d.postal)) return 'Postal code should be 4 digits.';
   if (!Object.prototype.hasOwnProperty.call(CONFIG.PAYMENTS, d.payment)) return 'Please choose a payment method.';
   return '';
@@ -559,7 +658,12 @@ async function submitOrder(e) {
   if (busy) return;
   const f = e.target, err = $('formErr'), btn = f.querySelector('[type=submit]');
   const fd = new FormData(f), g = k => String(fd.get(k) || '').trim();
-  const d = { name: g('name'), email: g('email'), phone: g('phone').replace(/[\s-]/g, ''), address: g('address'), city: g('city'), region: g('region'), postal: g('postal'), payment: g('payment'), notes: g('notes') };
+  const geo = readGeo();
+  const d = { name: g('name'), email: g('email'), phone: g('phone').replace(/[\s-]/g, ''),
+    street: g('street'), brgy: geo.brgy, cityName: geo.city,
+    address: [g('street'), geo.brgy].filter(Boolean).join(', '),
+    city: [geo.city, geo.prov || geo.region].filter(Boolean).join(', ').slice(0, 80),
+    region: geo.zone, postal: g('postal'), payment: g('payment'), notes: g('notes') };
   const bad = validate(d);
   if (bad) { err.textContent = bad; return; }
   if (g('website')) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
@@ -567,7 +671,8 @@ async function submitOrder(e) {
   if (Date.now() - last < 15000) { err.textContent = 'Please wait a few seconds before ordering again.'; return; }
   busy = true; btn.disabled = true; btn.textContent = 'PLACING ORDER…'; err.textContent = '';
   try {
-    const out = await send({ type: 'order', ...d, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
+    const { street, brgy, cityName, ...pub } = d;
+    const out = await send({ type: 'order', ...pub, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
     try { localStorage.setItem('esachica_last', String(Date.now())); } catch (x) {}
     confirmOrder(d, out.orderId, true);
   } catch (x) {
