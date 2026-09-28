@@ -29,7 +29,9 @@
   :root:not([data-theme="light"]){ --ivory:#EDE8DE; --warm-white:#FAF6F0; }
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth;scroll-padding-top:env(safe-area-inset-top,0px)}
+html{scroll-behavior:smooth;scroll-padding-top:calc(80px + env(safe-area-inset-top,0px))}
+@media(max-width:800px){html{scroll-padding-top:calc(64px + env(safe-area-inset-top,0px))}}
+.eyebrow{font-size:11px;letter-spacing:.2em;font-weight:600;color:var(--rose);margin-bottom:12px}
 body{background:var(--ivory);color:var(--espresso);font-family:'Inter',sans-serif;font-size:16px;line-height:1.5;overflow-x:hidden}
 img,svg{max-width:100%;display:block}
 .wrap{max-width:1400px;margin:0 auto;padding:0 32px}
@@ -279,9 +281,10 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
   </div>
 </section>
 
-<section class="highlight">
+<section class="highlight" id="collections">
   <div class="highlight-img photo tone-blush"></div>
   <div class="highlight-info">
+    <div class="eyebrow">THE FIRST COLLECTION</div>
     <h3>The Signature Set</h3>
     <p class="desc">Designed to make staying in feel like a reason to dress up.</p>
     <div class="price">₱3,200</div>
@@ -297,7 +300,7 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
   </div>
 </section>
 
-<section class="moment" id="collections">
+<section class="moment" id="story">
   <div class="wordmark">Esa Chica</div>
   <span class="serif">That girl</span>
   <p>Not perfection. Not pretending to be someone else. Esa Chica is the woman who knows herself, knows what she likes, and carries herself with effortless confidence — at home, and everywhere after.</p>
@@ -360,7 +363,7 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
 /* ============ EDIT THIS BLOCK ============ */
 const CONFIG = {
   // Paste your Google Apps Script Web App URL here (see SETUP.md). This is what sends orders to your Gmail + Google Sheet.
-  ORDER_ENDPOINT: 'https://script.google.com/macros/s/AKfycbxGkBj1U7eeEy5lC-7aMiBDRwRC0pn8VUkIFJixZNvvSHa8R6ryn42VsC_ilSyGgyQ/exec',
+  ORDER_ENDPOINT: 'https://script.google.com/macros/s/AKfycbyKTRMIuXfE-CFuz4acSA2rYGRr3v1DgfkzmT0PZ7NJf4sFQdXjxz2jCDW00sswxVB5/exec',
   // Free Philippine address list (regions > provinces > cities > barangays). Leave as is.
   PSGC: 'https://psgc.gitlab.io/api',
   // Fallback if no endpoint: order opens as a prefilled email to this address.
@@ -637,9 +640,12 @@ async function send(payload) {
   if (CONFIG.ORDER_ENDPOINT) {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 20000);
     try {
-      const res = await fetch(CONFIG.ORDER_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal });
-      const out = await res.json();
-      if (!out.ok) throw new Error(out.error || 'Order rejected');
+      let res;
+      try { res = await fetch(CONFIG.ORDER_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal }); }
+      catch (e) { console.error('order fetch failed', e); throw new Error(e && e.name === 'AbortError' ? 'timeout' : 'network'); }
+      let out;
+      try { out = await res.json(); } catch (e) { console.error('order bad response', res.status); throw new Error('bad-response'); }
+      if (!out.ok) throw new Error(out.error || 'rejected');
       return out;
     } finally { clearTimeout(t); }
   }
@@ -676,9 +682,10 @@ async function submitOrder(e) {
     try { localStorage.setItem('esachica_last', String(Date.now())); } catch (x) {}
     confirmOrder(d, out.orderId, true);
   } catch (x) {
+    console.error(x);
     err.textContent = x.message === 'not-configured'
       ? 'Ordering isn’t connected yet. Please DM us on Instagram @esachica.clo to order.'
-      : 'We couldn’t place your order. Your bag is saved — please try again or DM us on Instagram.';
+      : 'We couldn’t place your order (code: ' + esc(String(x.message).slice(0, 40)) + '). Your bag is saved — please try again or DM us on Instagram.';
     btn.disabled = false; btn.textContent = 'PLACE ORDER';
   } finally { busy = false; }
 }
