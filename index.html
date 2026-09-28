@@ -363,7 +363,7 @@ footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30p
 /* ============ EDIT THIS BLOCK ============ */
 const CONFIG = {
   // Paste your Google Apps Script Web App URL here (see SETUP.md). This is what sends orders to your Gmail + Google Sheet.
-  ORDER_ENDPOINT: 'https://script.google.com/macros/s/AKfycbyKTRMIuXfE-CFuz4acSA2rYGRr3v1DgfkzmT0PZ7NJf4sFQdXjxz2jCDW00sswxVB5/exec',
+  ORDER_ENDPOINT: 'https://script.google.com/macros/s/AKfycbxd8pj8KzTwhTWeqeAMP-zfq8CHHMHYW4M1LqAeg5y6JwE86fo2Ls_nORXr7EGVWts/exec',
   // Free Philippine address list (regions > provinces > cities > barangays). Leave as is.
   PSGC: 'https://psgc.gitlab.io/api',
   // Fallback if no endpoint: order opens as a prefilled email to this address.
@@ -376,8 +376,7 @@ const CONFIG = {
   PAYMENTS: {
     gcash: { label: 'GCash', note: 'Send to GCash 09XX XXX XXXX (Esa Chica).' },
     maya:  { label: 'Maya',  note: 'Send to Maya 09XX XXX XXXX (Esa Chica).' },
-    bank:  { label: 'Bank transfer', note: 'Bank: XXXX · Account name: Esa Chica · Account no: XXXX XXXX XXXX.' },
-    cod:   { label: 'Cash on delivery', note: 'Please prepare the exact amount for the courier.' }
+    bank:  { label: 'Bank transfer', note: 'Bank: XXXX · Account name: Esa Chica · Account no: XXXX XXXX XXXX.' }
   }
 };
 /* ========================================= */
@@ -532,6 +531,7 @@ function setShip(zone) {
   const s = CONFIG.SHIPPING[GEO.zone];
   $('shipAmt').textContent = s == null ? '—' : peso(s);
   $('totalAmt').textContent = peso(subtotalOf() + (s || 0));
+  if (typeof refreshQuote === 'function') refreshQuote();
 }
 function readGeo() {
   if (GEO.manual) return { prov: $('mProv').value.trim(), city: $('mCity').value.trim(), brgy: $('mBrgy').value.trim(), zone: $('mZone').value, region: '' };
@@ -608,9 +608,13 @@ function startCheckout() {
     <input class="field" name="postal" placeholder="Postal code" inputmode="numeric" maxlength="4" autocomplete="postal-code" required>
     <div style="font-size:12px;letter-spacing:.1em;font-weight:600;margin-top:6px">PAYMENT</div>
     ${Object.entries(CONFIG.PAYMENTS).map(([k, v], n) => `<label class="radio"><input type="radio" name="payment" value="${esc(k)}"${n === 0 ? ' checked' : ''}> ${esc(v.label)}</label>`).join('')}
+    <div id="paymentNote" class="note">${esc(CONFIG.PAYMENTS.gcash.note)}</div>
+    <div class="note">Please pay the Total above before placing your order.</div>
+    <input class="field" name="paymentReference" placeholder="Payment Reference Number" maxlength="100" autocomplete="off" required>
+    <div class="note">Enter the reference number shown in your payment confirmation.</div>
     <textarea class="field" name="notes" placeholder="Notes (optional)" maxlength="300" rows="2"></textarea>
     <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
-    <div class="sumrow"><span>Subtotal</span><span>${peso(subtotalOf())}</span></div>
+    <div class="sumrow"><span>Subtotal</span><span id="subtotalAmt">${peso(subtotalOf())}</span></div>
     <div class="sumrow"><span>Shipping</span><span id="shipAmt">—</span></div>
     <div class="sumrow" style="font-weight:600"><span>Total</span><span id="totalAmt">${peso(subtotalOf())}</span></div>
     <div class="err" id="formErr" role="alert"></div>
@@ -620,9 +624,41 @@ function startCheckout() {
   const f = $('checkoutForm');
   f.addEventListener('submit', submitOrder);
   f.querySelector('[data-back]').addEventListener('click', renderCart);
+  f.querySelectorAll('input[name="payment"]').forEach(r => r.addEventListener('change', updatePaymentNote));
   initGeo();
+  updatePaymentNote();
 }
 
+function updatePaymentNote() {
+  const k = document.querySelector('input[name="payment"]:checked')?.value;
+  const p = k && CONFIG.PAYMENTS[k];
+  if ($('paymentNote') && p) $('paymentNote').textContent = p.note;
+}
+async function refreshQuote() {
+  if (!cart.length) return;
+  const zone = GEO.zone;
+  if (!zone) {
+    $('shipAmt').textContent = '—';
+    $('totalAmt').textContent = peso(subtotalOf());
+    return;
+  }
+  const localSubtotal = subtotalOf();
+  const localShipping = CONFIG.SHIPPING[zone] || 0;
+  $('subtotalAmt').textContent = peso(localSubtotal);
+  $('shipAmt').textContent = peso(localShipping);
+  $('totalAmt').textContent = peso(localSubtotal + localShipping);
+  if (!CONFIG.ORDER_ENDPOINT) return;
+  try {
+    const out = await send({ type: 'quote', region: zone, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
+    if (out && Number.isFinite(Number(out.subtotal)) && Number.isFinite(Number(out.shipping)) && Number.isFinite(Number(out.total))) {
+      $('subtotalAmt').textContent = peso(out.subtotal);
+      $('shipAmt').textContent = peso(out.shipping);
+      $('totalAmt').textContent = peso(out.total);
+    }
+  } catch (x) {
+    console.warn('quote refresh failed', x);
+  }
+}
 function validate(d) {
   if (d.name.length < 2) return 'Please enter your full name.';
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.email)) return 'Please enter a valid email.';
@@ -633,6 +669,7 @@ function validate(d) {
   if (d.street.length < 3) return 'Please enter your house / unit no. and street.';
   if (!/^\d{4}$/.test(d.postal)) return 'Postal code should be 4 digits.';
   if (!Object.prototype.hasOwnProperty.call(CONFIG.PAYMENTS, d.payment)) return 'Please choose a payment method.';
+  if (d.paymentReference.length < 3) return 'Please enter your payment reference number.';
   return '';
 }
 
@@ -652,7 +689,7 @@ async function send(payload) {
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(CONFIG.EMAIL) && !/^YOUR_/.test(CONFIG.EMAIL)) {
     const id = 'EC-' + Date.now().toString(36).toUpperCase();
     const lines = payload.items.map(i => `${i.qty} x ${PRODUCTS[i.id].name} (${i.color ? i.color + ', ' : ''}${i.size})`).join('\n');
-    const body = `Order ${id}\n\n${lines}\n\nName: ${payload.name}\nEmail: ${payload.email}\nPhone: ${payload.phone}\nAddress: ${payload.address}, ${payload.city}, ${payload.region} ${payload.postal}\nPayment: ${CONFIG.PAYMENTS[payload.payment].label}\nNotes: ${payload.notes}`;
+    const body = `Order ${id}\n\n${lines}\n\nName: ${payload.name}\nEmail: ${payload.email}\nPhone: ${payload.phone}\nAddress: ${payload.address}, ${payload.city}, ${payload.region} ${payload.postal}\nSubtotal: ${peso(subtotalOf())}\nShipping: ${peso(CONFIG.SHIPPING[payload.region] || 0)}\nTotal: ${peso(subtotalOf() + (CONFIG.SHIPPING[payload.region] || 0))}\nPayment: ${CONFIG.PAYMENTS[payload.payment].label}\nPayment Reference: ${payload.paymentReference}\nPayment Status: Payment for verification\nOrder Status: New\nNotes: ${payload.notes}`;
     window.location.href = 'mailto:' + CONFIG.EMAIL + '?subject=' + encodeURIComponent('New order ' + id) + '&body=' + encodeURIComponent(body);
     return { ok: true, orderId: id };
   }
@@ -669,7 +706,7 @@ async function submitOrder(e) {
     street: g('street'), brgy: geo.brgy, cityName: geo.city,
     address: [g('street'), geo.brgy].filter(Boolean).join(', '),
     city: [geo.city, geo.prov || geo.region].filter(Boolean).join(', ').slice(0, 80),
-    region: geo.zone, postal: g('postal'), payment: g('payment'), notes: g('notes') };
+    region: geo.zone, postal: g('postal'), payment: g('payment'), paymentReference: g('paymentReference'), notes: g('notes') };
   const bad = validate(d);
   if (bad) { err.textContent = bad; return; }
   if (g('website')) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
@@ -680,7 +717,7 @@ async function submitOrder(e) {
     const { street, brgy, cityName, ...pub } = d;
     const out = await send({ type: 'order', ...pub, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
     try { localStorage.setItem('esachica_last', String(Date.now())); } catch (x) {}
-    confirmOrder(d, out.orderId, true);
+    confirmOrder(d, out.orderId, true, out);
   } catch (x) {
     console.error(x);
     err.textContent = x.message === 'not-configured'
@@ -690,16 +727,21 @@ async function submitOrder(e) {
   } finally { busy = false; }
 }
 
-function confirmOrder(d, orderId, real) {
-  const total = subtotalOf() + CONFIG.SHIPPING[d.region];
+function confirmOrder(d, orderId, real, totals) {
+  const total = totals && Number.isFinite(Number(totals.total)) ? Number(totals.total) : subtotalOf() + CONFIG.SHIPPING[d.region];
   if (real) { cart = []; saveCart(); }
   $('drawerTitle').textContent = 'Order placed';
   $('drawerFooter').innerHTML = '';
   $('drawerBody').innerHTML = `<div style="text-align:center;padding-top:40px">
     <div class="serif" style="font-size:24px;font-style:italic;margin-bottom:14px">Thank you, ${esc(d.name.split(' ')[0])}.</div>
-    <p style="font-size:14px;color:#6b5d52;line-height:1.7">Order <b>${esc(orderId)}</b> · Total <b>${peso(total)}</b><br>
-    ${esc(CONFIG.PAYMENTS[d.payment].note)}<br>
-    Send proof of payment (if any) to us on Instagram <a href="${esc(CONFIG.INSTAGRAM)}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">@esachica.clo</a>. We’ll confirm shipping at ${esc(d.email)}.</p></div>`;
+    <p style="font-size:14px;color:#6b5d52;line-height:1.7">Order <b>${esc(orderId)}</b><br>
+    Total: <b>${peso(total)}</b><br>
+    Payment: <b>${esc(CONFIG.PAYMENTS[d.payment].label)}</b><br>
+    Reference: <b>${esc(d.paymentReference)}</b><br>
+    Payment status: <b>Payment for verification</b></p>
+    <p style="font-size:13px;color:#6b5d52;line-height:1.7;margin-top:14px">Your order was received. We’ll verify the payment before the order is processed and send fulfillment updates to ${esc(d.email)}.</p>
+    <p style="font-size:13px;color:#6b5d52;line-height:1.7;margin-top:12px">Stay close on Instagram <a href="${esc(CONFIG.INSTAGRAM)}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">@esachica.clo</a> and TikTok <a href="${esc(CONFIG.TIKTOK)}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">@esachica.clo</a>.</p>
+  </div>`;
 }
 
 async function joinList(e) {
