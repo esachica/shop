@@ -159,6 +159,9 @@ header.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;backgroun
 .news-form input{flex:1;background:none;border:none;color:var(--warm-white);padding:12px 0;font-size:14px}
 .news-form input::placeholder{color:rgba(250,246,240,.5)}
 .news-form button{font-size:12px;letter-spacing:.1em;font-weight:600;padding:12px 4px}
+.news-form button:disabled{cursor:wait;opacity:.85}
+.news-form .spin{display:inline-block;width:11px;height:11px;border:1.5px solid rgba(250,246,240,.35);border-top-color:var(--warm-white);border-radius:50%;margin-right:8px;vertical-align:-1px;animation:joinspin .7s linear infinite}
+@keyframes joinspin{to{transform:rotate(360deg)}}
 
 /* Footer */
 footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30px}
@@ -792,11 +795,17 @@ async function joinList(e) {
   const email = $('newsEmail').value.trim(), msg = $('newsMsg');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { msg.textContent = 'Please enter a valid email.'; return false; }
   if (!CONFIG.ORDER_ENDPOINT) { msg.textContent = 'Sign-ups open soon — follow @esachica.clo in the meantime.'; return false; }
+  const btn = $('newsForm').querySelector('button'), input = $('newsEmail');
+  if (btn.disabled) return false;   // already sending
+  btn.disabled = true; input.readOnly = true;
+  btn.innerHTML = '<span class="spin" aria-hidden="true"></span>JOINING…';
+  msg.textContent = 'Adding you to the list…';
   try {
     await send({ type: 'subscribe', email });
     msg.textContent = "You're on the list — thank you.";
     $('newsForm').style.display = 'none';
   } catch (x) { msg.textContent = 'Something went wrong — please try again.'; }
+  finally { btn.disabled = false; input.readOnly = false; btn.textContent = 'JOIN'; }
   return false;
 }
 
