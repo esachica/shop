@@ -159,13 +159,6 @@ header.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;backgroun
 .news-form input{flex:1;background:none;border:none;color:var(--warm-white);padding:12px 0;font-size:14px}
 .news-form input::placeholder{color:rgba(250,246,240,.5)}
 .news-form button{font-size:12px;letter-spacing:.1em;font-weight:600;padding:12px 4px}
-.news-form button:disabled{cursor:wait;opacity:.85}
-.news-form .spin{display:inline-block;width:11px;height:11px;border:1.5px solid rgba(250,246,240,.35);border-top-color:var(--warm-white);border-radius:50%;margin-right:8px;vertical-align:-1px;animation:joinspin .7s linear infinite}
-@keyframes joinspin{to{transform:rotate(360deg)}}
-.btn:disabled{cursor:wait;opacity:.85}
-.btn .spin{display:inline-block;width:12px;height:12px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;margin-right:10px;vertical-align:-1px;animation:joinspin .7s linear infinite}
-@keyframes stepin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-#stepDetails,#stepPay{animation:stepin .35s ease}
 
 /* Footer */
 footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30px}
@@ -727,7 +720,7 @@ function validate(d) {
 
 async function send(payload) {
   if (CONFIG.ORDER_ENDPOINT) {
-    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 40000);
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 20000);
     try {
       let res;
       try { res = await fetch(CONFIG.ORDER_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal }); }
@@ -759,11 +752,10 @@ async function submitOrder(e) {
   if (trap) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
   let last = 0; try { last = +localStorage.getItem('esachica_last') || 0; } catch (x) {}
   if (Date.now() - last < 15000) { err.textContent = 'Please wait a few seconds before ordering again.'; return; }
-  busy = true; btn.disabled = true; btn.innerHTML = '<span class="spin" aria-hidden="true"></span>PLACING ORDER…'; err.textContent = '';
+  busy = true; btn.disabled = true; btn.textContent = 'PLACING ORDER…'; err.textContent = '';
   try {
     const { street, brgy, cityName, ...pub } = d;
-    if (!f.dataset.rid) f.dataset.rid = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);   // same id on retry = no duplicate order
-    const out = await send({ type: 'order', requestId: f.dataset.rid, ...pub, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
+    const out = await send({ type: 'order', ...pub, items: cart.map(i => ({ id: i.id, size: i.size, color: i.color, qty: i.qty })) });
     try { localStorage.setItem('esachica_last', String(Date.now())); } catch (x) {}
     confirmOrder(d, out.orderId, true, out);
   } catch (x) {
@@ -799,17 +791,11 @@ async function joinList(e) {
   const email = $('newsEmail').value.trim(), msg = $('newsMsg');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { msg.textContent = 'Please enter a valid email.'; return false; }
   if (!CONFIG.ORDER_ENDPOINT) { msg.textContent = 'Sign-ups open soon — follow @esachica.clo in the meantime.'; return false; }
-  const btn = $('newsForm').querySelector('button'), input = $('newsEmail');
-  if (btn.disabled) return false;   // already sending
-  btn.disabled = true; input.readOnly = true;
-  btn.innerHTML = '<span class="spin" aria-hidden="true"></span>JOINING…';
-  msg.textContent = 'Adding you to the list…';
   try {
     await send({ type: 'subscribe', email });
     msg.textContent = "You're on the list — thank you.";
     $('newsForm').style.display = 'none';
   } catch (x) { msg.textContent = 'Something went wrong — please try again.'; }
-  finally { btn.disabled = false; input.readOnly = false; btn.textContent = 'JOIN'; }
   return false;
 }
 
