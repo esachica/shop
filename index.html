@@ -162,6 +162,10 @@ header.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;backgroun
 .news-form button:disabled{cursor:wait;opacity:.85}
 .news-form .spin{display:inline-block;width:11px;height:11px;border:1.5px solid rgba(250,246,240,.35);border-top-color:var(--warm-white);border-radius:50%;margin-right:8px;vertical-align:-1px;animation:joinspin .7s linear infinite}
 @keyframes joinspin{to{transform:rotate(360deg)}}
+.btn:disabled{cursor:wait;opacity:.85}
+.btn .spin{display:inline-block;width:12px;height:12px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;margin-right:10px;vertical-align:-1px;animation:joinspin .7s linear infinite}
+@keyframes stepin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#stepDetails,#stepPay{animation:stepin .35s ease}
 
 /* Footer */
 footer{background:var(--black);color:rgba(250,246,240,.75);padding:90px 32px 30px}
@@ -755,7 +759,7 @@ async function submitOrder(e) {
   if (trap) { return confirmOrder(d, 'EC-' + Date.now().toString(36).toUpperCase(), false); } // bot trap
   let last = 0; try { last = +localStorage.getItem('esachica_last') || 0; } catch (x) {}
   if (Date.now() - last < 15000) { err.textContent = 'Please wait a few seconds before ordering again.'; return; }
-  busy = true; btn.disabled = true; btn.textContent = 'PLACING ORDER…'; err.textContent = '';
+  busy = true; btn.disabled = true; btn.innerHTML = '<span class="spin" aria-hidden="true"></span>PLACING ORDER…'; err.textContent = '';
   try {
     const { street, brgy, cityName, ...pub } = d;
     if (!f.dataset.rid) f.dataset.rid = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);   // same id on retry = no duplicate order
